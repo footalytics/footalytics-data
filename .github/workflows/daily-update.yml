@@ -1,7 +1,7 @@
 name: daily-csv-sync
 on:
   schedule:
-    - cron: "0 5 * * *"
+    - cron: "0 5 * * *" # 05:00 UTC daily, shortly after the European matchday settles
   workflow_dispatch:
 permissions:
   contents: write
@@ -25,5 +25,5 @@ jobs:
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
-          N=$($(wc -l < data/settled-predictions.csv) - 1)
-          curl -fsSL -X POST -H "Content-Type: application/json"             -d "{"content":"📊 footalytics-data daily sync done - **$N settled predictions** now in the CSV. Board: https://footalytics.farvor.com/accuracy"}"             "$WEBHOOK" || true
+          N=$(( $(wc -l < data/settled-predictions.csv) - 1 ))
+          curl -fsSL -X POST -H "Content-Type: application/json"             -d "{\"content\":\"Sync done - **$N settled predictions** now in the CSV. Board: https://footalytics.farvor.com/accuracy\"}"             "$WEBHOOK" || true
