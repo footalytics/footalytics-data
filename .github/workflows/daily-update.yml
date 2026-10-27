@@ -1,7 +1,7 @@
 name: daily-csv-sync
 on:
   schedule:
-    - cron: "0 5 * * *" # 05:00 UTC daily, shortly after the European matchday settles
+    - cron: "0 5 * * *"
   workflow_dispatch:
 permissions:
   contents: write
@@ -12,9 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Fetch latest settled predictions CSV
         run: |
-          curl -fsSL --retry 3 \
-            "https://footalytics.farvor.com/api/public/accuracy/settled.csv" \
-            -o data/settled-predictions.csv
+          curl -fsSL --retry 3             "https://footalytics.farvor.com/api/public/accuracy/settled.csv"             -o data/settled-predictions.csv
       - name: Commit if changed
         run: |
           git config user.name "csv-sync"
@@ -22,3 +20,10 @@ jobs:
           git add data/settled-predictions.csv
           git diff --cached --quiet || git commit -m "csv sync $(date -u +%F)"
           git push
+      - name: Notify Discord
+        if: success()
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          N=$($(wc -l < data/settled-predictions.csv) - 1)
+          curl -fsSL -X POST -H "Content-Type: application/json"             -d "{"content":"📊 footalytics-data daily sync done - **$N settled predictions** now in the CSV. Board: https://footalytics.farvor.com/accuracy"}"             "$WEBHOOK" || true
