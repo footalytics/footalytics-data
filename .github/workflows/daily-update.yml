@@ -7,7 +7,7 @@ permissions:
   contents: write
 jobs:
   sync:
-    runs-on: [self-hosted, windows, X64]
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Fetch latest settled predictions CSV
