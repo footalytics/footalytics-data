@@ -7,7 +7,7 @@ permissions:
   contents: write
 jobs:
   sync:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Fetch latest settled predictions CSV
