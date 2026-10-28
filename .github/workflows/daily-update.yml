@@ -11,42 +11,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Fetch latest settled predictions CSV
-        shell: pwsh
         run: |
-          curl.exe -fsSL --retry 3 `
-            "https://footalytics.farvor.com/api/public/accuracy/settled.csv" `
-            -o data/settled-predictions.csv
+          curl -fsSL --retry 3             "https://footalytics.farvor.com/api/public/accuracy/settled.csv"             -o data/settled-predictions.csv
       - name: Commit if changed
         id: commit
-        shell: pwsh
         run: |
           git config user.name "csv-sync"
           git config user.email "csv-sync@users.noreply.github.com"
           git add data/settled-predictions.csv
-          git diff --cached --quiet; $changed = ($LASTEXITCODE -ne 0)
-          if ($changed) {
-            git commit -m "csv sync"
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "csv sync $(date -u +%F)"
             git push
-          }
-          $n = (Import-Csv data/settled-predictions.csv | Measure-Object).Count
-          "changed=$(if ($changed) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
-          "n=$n" >> $env:GITHUB_OUTPUT
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Count rows
+        if: steps.commit.outputs.changed == 'true'
+        id: count
+        run: echo "n=$(( $(wc -l < data/settled-predictions.csv) - 1 ))" >> "$GITHUB_OUTPUT"
       - name: Notify Discord
         if: steps.commit.outputs.changed == 'true'
-        shell: pwsh
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          N: ${{ steps.commit.outputs.n }}
+          N: ${{ steps.count.outputs.n }}
         run: |
-          $body = @{ content = "Sync done - **$env:N settled predictions** now in the CSV. Board: https://footalytics.farvor.com/accuracy" } | ConvertTo-Json
-          Invoke-RestMethod -Uri $env:WEBHOOK -Method Post -ContentType 'application/json' -Body $body
+          curl -fsSL -X POST -H "Content-Type: application/json"             -d "{\"content\":\"Sync done - **$N settled predictions** now in the CSV. Board: https://footalytics.farvor.com/accuracy\"}"             "$WEBHOOK" || true
       - name: Notify Telegram
         if: steps.commit.outputs.changed == 'true'
-        shell: pwsh
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          N: ${{ steps.commit.outputs.n }}
+          N: ${{ steps.count.outputs.n }}
         run: |
-          $body = @{ chat_id = $env:TG_CHAT_ID; parse_mode = 'HTML'; text = "Daily settlement update: <b>$env:N matches</b> now graded in the public CSV. Board: https://footalytics.farvor.com/accuracy" } | ConvertTo-Json
-          Invoke-RestMethod -Uri "https://api.telegram.org/bot$env:TG_BOT_TOKEN/sendMessage" -Method Post -ContentType 'application/json' -Body $body
+          curl -fsSL -X POST             "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage"             -H "Content-Type: application/json"             -d "{\"chat_id\":\"$TG_CHAT_ID\",\"parse_mode\":\"HTML\",\"text\":\"Daily settlement update: <b>$N matches</b> now graded in the public CSV. Board: https://footalytics.farvor.com/accuracy\"}"             || true
