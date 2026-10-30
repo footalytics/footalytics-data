@@ -1,7 +1,7 @@
 name: daily-csv-sync
 on:
   schedule:
-    - cron: "0 21 * * *" # 21:00 UTC = 05:00 Beijing: right after European matchdays settle
+    - cron: "0 9,21 * * *" # twice daily so pre-match predictions are committed before most kickoffs
   workflow_dispatch:
 permissions:
   contents: write
@@ -10,38 +10,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch latest settled predictions CSV
+      - name: Fetch settled + pending CSVs
         run: |
-          curl -fsSL --retry 3             "https://footalytics.farvor.com/api/public/accuracy/settled.csv"             -o data/settled-predictions.csv
+          curl -fsSL --retry 3 "https://footalytics.farvor.com/api/public/accuracy/settled.csv" -o data/settled-predictions.csv
+          # The pre-match ledger endpoint may not exist on older deployments; never break the sync over it.
+          if curl -fsSL --retry 2 "https://footalytics.farvor.com/api/public/accuracy/pending.csv" -o data/pending-predictions.csv.tmp; then
+            mv data/pending-predictions.csv.tmp data/pending-predictions.csv
+          else
+            rm -f data/pending-predictions.csv.tmp
+            echo "pending CSV not available yet"
+          fi
       - name: Commit if changed
         id: commit
         run: |
           git config user.name "csv-sync"
           git config user.email "csv-sync@users.noreply.github.com"
           git add data/settled-predictions.csv
+          [ -f data/pending-predictions.csv ] && git add data/pending-predictions.csv
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            git commit -m "csv sync $(date -u +%F)"
+            git commit -m "csv sync $(date -u +%F %H:%M UTC)"
             git push
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Count rows
         if: steps.commit.outputs.changed == 'true'
         id: count
-        run: echo "n=$(( $(wc -l < data/settled-predictions.csv) - 1 ))" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "n=$(( $(wc -l < data/settled-predictions.csv) - 1 ))" >> "$GITHUB_OUTPUT"
+          [ -f data/pending-predictions.csv ] && echo "p=$(( $(wc -l < data/pending-predictions.csv) - 1 ))" >> "$GITHUB_OUTPUT" || echo "p=0" >> "$GITHUB_OUTPUT"
       - name: Notify Discord
         if: steps.commit.outputs.changed == 'true'
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           N: ${{ steps.count.outputs.n }}
+          P: ${{ steps.count.outputs.p }}
         run: |
-          curl -fsSL -X POST -H "Content-Type: application/json"             -d "{\"content\":\"Sync done - **$N settled predictions** now in the CSV. Board: https://footalytics.farvor.com/accuracy\"}"             "$WEBHOOK" || true
+          curl -fsSL -X POST -H "Content-Type: application/json"             -d "{\"content\":\"Sync done - **$N settled predictions** (pre-match ledger: $P pending). Board: https://footalytics.farvor.com/accuracy\"}"             "$WEBHOOK" || true
       - name: Notify Telegram
         if: steps.commit.outputs.changed == 'true'
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           N: ${{ steps.count.outputs.n }}
+          P: ${{ steps.count.outputs.p }}
         run: |
-          curl -fsSL -X POST             "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage"             -H "Content-Type: application/json"             -d "{\"chat_id\":\"$TG_CHAT_ID\",\"parse_mode\":\"HTML\",\"text\":\"Daily settlement update: <b>$N matches</b> now graded in the public CSV. Board: https://footalytics.farvor.com/accuracy\"}"             || true
+          curl -fsSL -X POST             "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage"             -H "Content-Type: application/json"             -d "{\"chat_id\":\"$TG_CHAT_ID\",\"parse_mode\":\"HTML\",\"text\":\"Daily update: <b>$N matches</b> graded in the public CSV (pre-match ledger: $P pending). Board: https://footalytics.farvor.com/accuracy\"}"             || true
